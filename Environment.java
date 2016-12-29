@@ -7,6 +7,7 @@ public class Environment {
     public static int PONY_SCORE = 10;
     public static int TROLL_SCORE = -15;
     public static int NEUTRAL_SCORE = 2;
+    public static int NEIGHBOR_COUNT = 8;
     //Int arrays are x, y coordinates
     
     //Immutable parts of the Environment
@@ -63,34 +64,20 @@ public class Environment {
         burglerPath.add(burgler);
     }   
     
-    
-    /**
-     * Gets the set of valid moves for the burgler.
-     * @return a set of integers representing moves:
-     *         7 0 1    "B" is burgler location and the integers are the
-     *         6 B 2    encodings for moving to the squares in which the  
-     *         5 4 3    integers reside.
-     */
-    public List<Integer> getValidMoves() {
-        List<Integer> moves = new ArrayList<>();
-        for (int i=0; i<8; i++) 
-            if (validMove(i, burgler)) 
-                moves.add(i);
-        return moves;
-    }
-    
     /**
      * Moves the burgler in the given direction, as long as it's valid.
      * @param dir 0-7, a Moore neighborhood move numbered clockwise from north
-     * @return false if it wasn't valid
+     * @return null if invalid, otherwise array of feedback for the Agent:
+     *             fb[0] = (int) reward; 
+     *             fb[1] = (int[]) resultLocation
      */
-    public boolean makeMove(int dir) {
+    public Object[] makeMove(int dir) {
         if (validMove(dir, burgler)) {
             burgler = getMoveResult(dir, burgler);
             burglerPath.add(burgler);
-            this.processScore();
-            return true;
-        } else return false;
+            int reward = this.processScore();
+            return new Object[]{reward, burgler};
+        } else return null;
     }
     
     /**
@@ -98,8 +85,9 @@ public class Environment {
      * @return if the burgler is at the escape
      */
     public boolean hasTerm() {
-        for (int i=0; i<burgler.length; i++) if (burgler[i]!=escape[i]) return false;
-        return true;
+        boolean win = hasBurgler(escape[0], escape[1]);
+        boolean lose = hasTroll(burgler[0], burgler[1]);
+        return win||lose;
     }
     
     /**
@@ -110,41 +98,20 @@ public class Environment {
         return this.score;
     }
     
+    /**
+     * Gets the burgler's current location
+     * @return the burgler's location
+     */
+    public int[] getBurgler() {
+        return this.burgler.clone();
+    }
+    
     /** 
      * Determines the number of ponies on the board.
      * @return pony count
      */
     public int ponyCount() {
         return this.ponies.size();
-    }
-    
-    /**
-     * Gets the result int[x, y] of moving dir from src.
-     * @param dir 0-7, a Moore neighborhood move numbered clockwise from north
-     * @param src The starting location for the proposed move
-     * @return the resulting point as an int array
-     */
-    public static int[] getMoveResult(int dir, int[] src) {
-        int[] res = null;
-        switch(dir) {
-            case 0: res = new int[]{src[0], src[1]+1};
-            break;
-            case 1: res = new int[]{src[0]+1, src[1]+1};
-            break;
-            case 2: res = new int[]{src[0]+1, src[1]};
-            break;
-            case 3: res = new int[]{src[0]+1, src[1]-1};
-            break;
-            case 4: res = new int[]{src[0], src[1]-1};
-            break;
-            case 5: res = new int[]{src[0]-1, src[1]-1};
-            break;
-            case 6: res = new int[]{src[0]-1, src[1]};
-            break;
-            case 7: res = new int[]{src[0]-1, src[1]+1};
-            break;
-        }
-        return res;
     }
     
     /**
@@ -208,16 +175,65 @@ public class Environment {
     }
     
     /**
-     * Changes the score based on the burgler's location. To be called just 
-     * after moving the burgler.
+     * Determines whether or not the dir move from src is valid.
+     * @param dir 0-7, a Moore neighborhood move numbered clockwise from north
+     * @param src The starting location for the proposed move
+     * @return whether or not it's valid
      */
-    private void processScore() {
-        if (this.hasEscape(burgler[0], burgler[1])) score += ESCAPE_SCORE;
+    private boolean validMove(int dir, int[] src) {
+        int[] res = getMoveResult(dir, src);
+        for (int i=0; i<res.length; i++) 
+            if (res[i]<0||res[i]>=size) return false;
+        if (this.hasObstruction(res[0], res[1])) return false;
+        return true;
+    }
+    
+    /**
+     * Gets the result int[x, y] of moving dir from src.
+     * @param dir 0-7, a Moore neighborhood move numbered clockwise from north
+     * @param src The starting location for the proposed move
+     * @return the resulting point as an int array
+     */
+    private static int[] getMoveResult(int dir, int[] src) {
+        //Otherwise get its result
+        int[] res = null;
+        switch(dir) {
+            case 0: res = new int[]{src[0], src[1]+1};
+            break;
+            case 1: res = new int[]{src[0]+1, src[1]+1};
+            break;
+            case 2: res = new int[]{src[0]+1, src[1]};
+            break;
+            case 3: res = new int[]{src[0]+1, src[1]-1};
+            break;
+            case 4: res = new int[]{src[0], src[1]-1};
+            break;
+            case 5: res = new int[]{src[0]-1, src[1]-1};
+            break;
+            case 6: res = new int[]{src[0]-1, src[1]};
+            break;
+            case 7: res = new int[]{src[0]-1, src[1]+1};
+            break;
+        }
+        return res;
+    }
+    
+    /**
+     * Changes the score based on the burgler's location. To be called just 
+     * after moving the burgler. Removes captured ponies
+     * @return reward that was added
+     */
+    private int processScore() {
+        int add = 0;
+        if (this.hasEscape(burgler[0], burgler[1])) add = ESCAPE_SCORE;
         else if (this.hasPony(burgler[0], burgler[1])) {
-            score += PONY_SCORE;
+            add = PONY_SCORE;
             this.removePony(burgler);
-        } else if (this.hasTroll(burgler[0], burgler[1])) score += TROLL_SCORE;
-        else score += NEUTRAL_SCORE;
+        } else if (this.hasTroll(burgler[0], burgler[1])) add = TROLL_SCORE;
+        else add = NEUTRAL_SCORE;
+        
+        score += add;
+        return add;
     }
     
     /**
@@ -245,21 +261,7 @@ public class Environment {
     }    
     
     /**
-     * Determines whether or not the dir move from src is valid.
-     * @param dir 0-7, a Moore neighborhood move numbered clockwise from north
-     * @param src The starting location for the proposed move
-     * @return whether or not it's valid
-     */
-    private boolean validMove(int dir, int[] src) {
-        int[] res = getMoveResult(dir, src);
-        for (int i=0; i<res.length; i++) 
-            if (res[i]<0||res[i]>=size) return false;
-        if (this.hasObstruction(res[0], res[1])) return false;
-        return true;
-    }
-    
-    /**
-     * Returns whether or not this spot is occupied. For initializing burg
+     * Returns whether or not this spot is occupied. For initializing burgler
      * @param x the x coordinate
      * @param y the y coordinate
      * @return if there's something here
@@ -271,11 +273,11 @@ public class Environment {
     }
 
     /**
-     * Determines whether or not there's a thing here.
+     * Determines whether or not there's a thing from the list here.
      * @param x The x coordinate
      * @param y the y coordinate
      * @param list The big list of things
-     * @return if there is a this here
+     * @return if there is an element of list here
      */
     private boolean hasThing(int x, int y, Collection<int[]> list) {
         for (int[] item : list)  {
@@ -311,9 +313,24 @@ public class Environment {
         pointList.add(point);
         return pointList;
     }
+    
+    /**
+     * Gets the set of valid moves for the burgler. Do not use, it's cheating.
+     * @return a set of integers representing moves:
+     *         7 0 1    "B" is burgler location and the integers are the
+     *         6 B 2    encodings for moving to the squares in which the  
+     *         5 4 3    integers reside.
+     */
+    public List<Integer> getValidMoves() {
+        List<Integer> moves = new ArrayList<>();
+        for (int i=0; i<8; i++) 
+            if (validMove(i, burgler)) 
+                moves.add(i);
+        return moves;
+    }
 
     /**
-     * Parses an arbitrary input file line. Splits the line into usefl tokens
+     * Parses an arbitrary input file line. Splits the line into useful tokens
      * passes it along to specific line handlers.
      * @param line The string to parse as a line
      * @param lineNum the number of this specific line
